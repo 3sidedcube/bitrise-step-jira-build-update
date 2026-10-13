@@ -1,0 +1,78 @@
+format_version: "13"
+default_step_lib_source: https://github.com/bitrise-io/bitrise-steplib.git
+project_type: other
+
+workflows:
+  # Lint and unit tests. Needs no credentials.
+  check:
+    steps:
+    - script@1:
+        title: go vet, gofmt and unit tests
+        inputs:
+        - content: |-
+            #!/usr/bin/env bash
+            set -euo pipefail
+            unformatted=$(gofmt -l .)
+            if [ -n "$unformatted" ]; then
+              echo "Not gofmt-ed: $unformatted"
+              exit 1
+            fi
+            go vet ./...
+            go test -count=1 ./...
+    - script@1:
+        title: Check step.yml
+        inputs:
+        - content: |-
+            #!/usr/bin/env bash
+            set -euo pipefail
+            stepman=$(command -v stepman || echo "$HOME/.bitrise/tools/stepman")
+            "$stepman" audit --step-yml ./step.yml
+
+  # End-to-end run against a real sandbox ticket. Needs these in .bitrise.secrets.yml:
+  #   JIRA_BASE_URL, JIRA_USER_EMAIL, JIRA_API_TOKEN,
+  #   SANDBOX_ISSUE_KEY      e.g. ABC-1234
+  #   SANDBOX_TARGET_STATUS  status to move the ticket to, e.g. In Review
+  #   SANDBOX_RESET_STATUS   status to move it back to, e.g. In Progress
+  test:
+    before_run:
+    - check
+    envs:
+    - BITRISE_BUILD_NUMBER: local
+    - BITRISE_PUBLIC_INSTALL_PAGE_URL: https://app.bitrise.io
+    - BITRISE_BUILD_URL: https://app.bitrise.io
+    - GIT_CLONE_COMMIT_MESSAGE_SUBJECT: "Merge pull request #1 from my-org/feature/$SANDBOX_ISSUE_KEY-e2e-test"
+    - BITRISE_GIT_BRANCH: develop
+    steps:
+    - path::./:
+        title: Comment and move to the target status
+        inputs:
+        - jira_base_url: $JIRA_BASE_URL
+        - jira_user_email: $JIRA_USER_EMAIL
+        - jira_api_token: $JIRA_API_TOKEN
+        - target_status: $SANDBOX_TARGET_STATUS
+        - fail_if_no_issue: "yes"
+    - script@1:
+        title: Check outputs
+        inputs:
+        - content: |-
+            #!/usr/bin/env bash
+            set -euo pipefail
+            test "$JIRA_ISSUE_KEY" = "$SANDBOX_ISSUE_KEY"
+            test "$JIRA_ISSUE_URL" = "${JIRA_BASE_URL%/}/browse/$SANDBOX_ISSUE_KEY"
+    - path::./:
+        title: Run again, already in the target status
+        inputs:
+        - jira_base_url: $JIRA_BASE_URL
+        - jira_user_email: $JIRA_USER_EMAIL
+        - jira_api_token: $JIRA_API_TOKEN
+        - target_status: $SANDBOX_TARGET_STATUS
+        - comment: ""
+    - path::./:
+        title: Move the sandbox ticket back
+        is_always_run: true
+        inputs:
+        - jira_base_url: $JIRA_BASE_URL
+        - jira_user_email: $JIRA_USER_EMAIL
+        - jira_api_token: $JIRA_API_TOKEN
+        - target_status: $SANDBOX_RESET_STATUS
+        - comment: ""

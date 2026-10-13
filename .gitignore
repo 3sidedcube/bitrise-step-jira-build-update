@@ -1,0 +1,5 @@
+.bitrise.secrets.yml
+.bitrise*
+!.bitrise.secrets.example.yml
+_tmp/
+PLAN.md

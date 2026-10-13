@@ -1,0 +1,99 @@
+title: Jira build update
+summary: Comments on the build's Jira ticket and moves it to a chosen status.
+description: |-
+  Finds the Jira ticket for the build from the source branch of the merged pull request,
+  posts a comment with the build number and install link, then moves the ticket to the
+  status set in `target_status`, e.g. `In Review`.
+
+  The source branch comes from, in order: the `source_branch` input, the merge commit
+  subject (`Merge pull request #1 from org/fix/ABC-1-x` or `Merge branch 'fix/ABC-1-x'`),
+  then `$BITRISE_GIT_BRANCH`. Squash and rebase merges aren't supported yet.
+
+  Add it after `deploy-to-bitrise-io`, which sets `$BITRISE_PUBLIC_INSTALL_PAGE_URL`,
+  and set `is_skippable: true` so a Jira problem doesn't fail the build.
+website: https://github.com/3sidedcube/bitrise-step-jira-build-update
+source_code_url: https://github.com/3sidedcube/bitrise-step-jira-build-update
+support_url: https://github.com/3sidedcube/bitrise-step-jira-build-update/issues
+
+type_tags:
+- notification
+
+is_always_run: false
+is_skippable: false
+run_if: ""
+
+toolkit:
+  go:
+    package_name: github.com/3sidedcube/bitrise-step-jira-build-update
+
+inputs:
+- jira_base_url:
+  opts:
+    title: Jira base URL
+    summary: Your Jira Cloud site, e.g. `https://your-site.atlassian.net`.
+    is_required: true
+
+- jira_user_email: ""
+  opts:
+    title: Jira user email
+    summary: Email of the Jira account the comments are posted as.
+    is_required: true
+    is_sensitive: true
+
+- jira_api_token: ""
+  opts:
+    title: Jira API token
+    summary: API token for that account, from id.atlassian.com/manage-profile/security/api-tokens.
+    is_required: true
+    is_sensitive: true
+
+- target_status:
+  opts:
+    title: Target status
+    summary: The status (column) to move the ticket to, e.g. `In Review`. Not case-sensitive.
+    description: |-
+      Must be reachable by a transition from the ticket's current status. If the ticket
+      is already in this status it isn't moved.
+    is_required: true
+
+- comment: |-
+    Build [$BITRISE_BUILD_NUMBER|$BITRISE_PUBLIC_INSTALL_PAGE_URL] succeeded.
+    ||Branch|{source_branch}|
+    ||Commit|$GIT_CLONE_COMMIT_MESSAGE_SUBJECT|
+    [Build details|$BITRISE_BUILD_URL]
+  opts:
+    title: Comment
+    summary: Comment to post, in Jira wiki markup. Leave empty to skip commenting.
+    description: |-
+      Bitrise fills in `$VARIABLES` before the step runs. `{source_branch}` is replaced
+      by the step with the detected source branch.
+
+- source_branch:
+  opts:
+    title: Source branch override
+    summary: Use this branch instead of detecting it from the merge commit.
+
+- jira_project_keys:
+  opts:
+    title: Jira project keys
+    summary: Comma-separated list, e.g. `ABC,XYZ`. When set, only keys from these projects count.
+    description: |-
+      Avoids false matches such as `chore/android-17-upgrade` being read as ticket `ANDROID-17`.
+
+- fail_if_no_issue: "no"
+  opts:
+    title: Fail if no ticket is found
+    summary: With `no`, a branch without a ticket key logs a warning and the step succeeds.
+    value_options:
+    - "yes"
+    - "no"
+
+outputs:
+- JIRA_ISSUE_KEY:
+  opts:
+    title: Jira ticket key
+    summary: The ticket key, e.g. `ABC-123`. Empty if none was found.
+- JIRA_ISSUE_URL:
+  opts:
+    title: Jira ticket URL
+    summary: Link to the ticket, e.g. `https://your-site.atlassian.net/browse/ABC-123`. Empty if none was found.
