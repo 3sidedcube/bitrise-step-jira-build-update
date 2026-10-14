@@ -33,19 +33,41 @@ inputs:
     summary: Your Jira Cloud site, e.g. `https://your-site.atlassian.net`.
     is_required: true
 
+- jira_auth_type: basic
+  opts:
+    title: Jira auth type
+    summary: How to sign in to Jira. `basic` for a classic API token plus email, `bearer` for a scoped, service account or OAuth token.
+    description: |-
+      `basic` sends `jira_user_email` and `jira_api_token` to `jira_base_url`.
+
+      `bearer` sends `jira_api_token` as a bearer token through Atlassian's API gateway
+      (`https://api.atlassian.com/ex/jira/<cloud ID>`), which these tokens require. The token
+      needs the `read:jira-work` and `write:jira-work` scopes.
+    value_options:
+    - basic
+    - bearer
+
 - jira_user_email: ""
   opts:
     title: Jira user email
-    summary: Email of the Jira account the comments are posted as.
-    is_required: true
+    summary: Email of the Jira account the comments are posted as. Required for `basic` auth, unused for `bearer`.
     is_sensitive: true
 
 - jira_api_token: ""
   opts:
     title: Jira API token
-    summary: API token for that account, from id.atlassian.com/manage-profile/security/api-tokens.
+    summary: A classic API token for `basic` auth, or a bearer token for `bearer` auth.
     is_required: true
     is_sensitive: true
+
+- jira_cloud_id:
+  opts:
+    title: Jira cloud ID
+    summary: Only for `bearer` auth. Leave empty to look it up from `jira_base_url`.
+    description: |-
+      Bearer requests go through `https://api.atlassian.com/ex/jira/<cloud ID>`. When this is
+      empty, the step reads the ID from `<jira_base_url>/_edge/tenant_info`. Set it if that
+      lookup fails.
 
 - target_status:
   opts:

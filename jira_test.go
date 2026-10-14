@@ -170,3 +170,66 @@ func TestClient_Timeout(t *testing.T) {
 		t.Fatalf("got %v, want a timeout error", err)
 	}
 }
+
+func TestBearerClient(t *testing.T) {
+	type req struct{ path, auth string }
+	var reqs []req
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqs = append(reqs, req{r.URL.Path, r.Header.Get("Authorization")})
+		_, _ = io.WriteString(w, `{"fields":{"status":{"name":"In Progress"}}}`)
+	}))
+	t.Cleanup(srv.Close)
+	gateway := apiGatewayURL
+	apiGatewayURL = srv.URL + "/"
+	t.Cleanup(func() { apiGatewayURL = gateway })
+
+	client := NewBearerClient("https://your-site.atlassian.net/", "cloud-123", "bearer-token", time.Second)
+	if _, err := client.GetStatus("ABC-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	want := req{"/ex/jira/cloud-123/rest/api/3/issue/ABC-1", "Bearer bearer-token"}
+	if len(reqs) != 1 || reqs[0] != want {
+		t.Errorf("got %+v, want [%+v]", reqs, want)
+	}
+	// Browse links still point at the site: the gateway has no /browse pages.
+	if got := client.IssueURL("ABC-1"); got != "https://your-site.atlassian.net/browse/ABC-1" {
+		t.Errorf("IssueURL = %q", got)
+	}
+}
+
+func TestLookupCloudID(t *testing.T) {
+	tests := []struct {
+		name    string
+		code    int
+		body    string
+		want    string
+		wantErr string
+	}{
+		{"found", http.StatusOK, `{"cloudId":"cloud-123"}`, "cloud-123", ""},
+		{"not a Jira site", http.StatusNotFound, ``, "", "returned 404"},
+		{"no cloud ID", http.StatusOK, `{}`, "", "no cloudId"},
+		{"not JSON", http.StatusOK, `<html>`, "", "unexpected response"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/_edge/tenant_info" || r.Header.Get("Authorization") != "" {
+					t.Errorf("unexpected request %s, Authorization %q", r.URL.Path, r.Header.Get("Authorization"))
+				}
+				w.WriteHeader(tt.code)
+				_, _ = io.WriteString(w, tt.body)
+			}))
+			t.Cleanup(srv.Close)
+
+			got, err := LookupCloudID(srv.URL+"/", time.Second)
+			if tt.wantErr == "" {
+				if err != nil || got != tt.want {
+					t.Errorf("got (%q, %v), want %q", got, err, tt.want)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("got (%q, %v), want an error containing %q", got, err, tt.wantErr)
+			}
+		})
+	}
+}

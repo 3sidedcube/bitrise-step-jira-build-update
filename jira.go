@@ -12,22 +12,69 @@ import (
 	"time"
 )
 
-// Client is a minimal Jira Cloud REST client using basic auth (email + API token).
+// apiGatewayURL is Atlassian's API gateway, which bearer tokens (service account and
+// scoped API tokens, OAuth) must go through instead of the site URL. A var so tests can
+// point it at a fake server.
+var apiGatewayURL = "https://api.atlassian.com"
+
+// Client is a minimal Jira Cloud REST client.
 type Client struct {
-	baseURL string
-	email   string
-	token   string
-	http    *http.Client
+	siteURL   string // the Jira site, for browse links
+	apiURL    string // where REST requests go: the site, or the gateway for bearer tokens
+	authorize func(*http.Request)
+	http      *http.Client
 }
 
-// NewClient returns a Client for baseURL, e.g. https://your-site.atlassian.net.
-func NewClient(baseURL, email, token string, timeout time.Duration) *Client {
+// NewClient returns a Client that signs requests with basic auth (email + classic API
+// token) and sends them to siteURL, e.g. https://your-site.atlassian.net.
+func NewClient(siteURL, email, token string, timeout time.Duration) *Client {
+	site := trimURL(siteURL)
 	return &Client{
-		baseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"),
-		email:   email,
-		token:   token,
-		http:    &http.Client{Timeout: timeout},
+		siteURL:   site,
+		apiURL:    site,
+		authorize: func(r *http.Request) { r.SetBasicAuth(email, token) },
+		http:      &http.Client{Timeout: timeout},
 	}
+}
+
+// NewBearerClient returns a Client that signs requests with a bearer token and sends
+// them through the API gateway for the site with the given cloud ID. siteURL is only
+// used for browse links, which the gateway doesn't serve.
+func NewBearerClient(siteURL, cloudID, token string, timeout time.Duration) *Client {
+	return &Client{
+		siteURL:   trimURL(siteURL),
+		apiURL:    trimURL(apiGatewayURL) + "/ex/jira/" + url.PathEscape(cloudID),
+		authorize: func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+token) },
+		http:      &http.Client{Timeout: timeout},
+	}
+}
+
+// LookupCloudID returns the cloud ID of the Jira site at siteURL, which bearer requests
+// need. It reads the site's public tenant info, so needs no credentials.
+func LookupCloudID(siteURL string, timeout time.Duration) (string, error) {
+	const path = "/_edge/tenant_info"
+	resp, err := (&http.Client{Timeout: timeout}).Get(trimURL(siteURL) + path)
+	if err != nil {
+		return "", fmt.Errorf("GET %s: %w", path, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("GET %s returned %d", path, resp.StatusCode)
+	}
+	var info struct {
+		CloudID string `json:"cloudId"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&info); err != nil {
+		return "", fmt.Errorf("GET %s: unexpected response: %w", path, err)
+	}
+	if info.CloudID == "" {
+		return "", fmt.Errorf("GET %s: no cloudId in the response", path)
+	}
+	return info.CloudID, nil
+}
+
+func trimURL(u string) string {
+	return strings.TrimRight(strings.TrimSpace(u), "/")
 }
 
 // APIError is a non-2xx response from Jira.
@@ -42,7 +89,7 @@ func (e *APIError) Error() string {
 	msg := fmt.Sprintf("%s %s returned %d", e.Method, e.Path, e.StatusCode)
 	switch e.StatusCode {
 	case http.StatusUnauthorized:
-		msg += " (check the jira_user_email and jira_api_token inputs)"
+		msg += " (check the jira_api_token input, plus jira_user_email for basic auth or the token's scopes for bearer)"
 	case http.StatusForbidden, http.StatusNotFound:
 		msg += " (the ticket doesn't exist, or the Jira user can't see it)"
 	}
@@ -63,7 +110,7 @@ type Transition struct {
 
 // IssueURL returns the browser link for key.
 func (c *Client) IssueURL(key string) string {
-	return c.baseURL + "/browse/" + key
+	return c.siteURL + "/browse/" + key
 }
 
 // GetStatus returns the name of the ticket's current status.
@@ -114,11 +161,11 @@ func (c *Client) do(method, path string, payload, out any) error {
 		body = bytes.NewReader(b)
 	}
 
-	req, err := http.NewRequest(method, c.baseURL+path, body)
+	req, err := http.NewRequest(method, c.apiURL+path, body)
 	if err != nil {
 		return fmt.Errorf("%s %s: %w", method, path, err)
 	}
-	req.SetBasicAuth(c.email, c.token)
+	c.authorize(req)
 	req.Header.Set("Accept", "application/json")
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")

@@ -29,7 +29,9 @@ workflows:
             "$stepman" audit --step-yml ./step.yml
 
   # End-to-end run against a real sandbox ticket. Needs these in .bitrise.secrets.yml:
-  #   JIRA_BASE_URL, JIRA_USER_EMAIL, JIRA_API_TOKEN,
+  #   JIRA_BASE_URL, JIRA_API_TOKEN,
+  #   JIRA_AUTH_TYPE         basic or bearer
+  #   JIRA_USER_EMAIL        for basic only
   #   SANDBOX_ISSUE_KEY      e.g. ABC-1234
   #   SANDBOX_TARGET_STATUS  status to move the ticket to, e.g. In Review
   #   SANDBOX_RESET_STATUS   status to move it back to, e.g. In Progress
@@ -47,6 +49,7 @@ workflows:
         title: Comment and move to the target status
         inputs:
         - jira_base_url: $JIRA_BASE_URL
+        - jira_auth_type: $JIRA_AUTH_TYPE
         - jira_user_email: $JIRA_USER_EMAIL
         - jira_api_token: $JIRA_API_TOKEN
         - target_status: $SANDBOX_TARGET_STATUS
@@ -63,6 +66,7 @@ workflows:
         title: Run again, already in the target status
         inputs:
         - jira_base_url: $JIRA_BASE_URL
+        - jira_auth_type: $JIRA_AUTH_TYPE
         - jira_user_email: $JIRA_USER_EMAIL
         - jira_api_token: $JIRA_API_TOKEN
         - target_status: $SANDBOX_TARGET_STATUS
@@ -72,6 +76,7 @@ workflows:
         is_always_run: true
         inputs:
         - jira_base_url: $JIRA_BASE_URL
+        - jira_auth_type: $JIRA_AUTH_TYPE
         - jira_user_email: $JIRA_USER_EMAIL
         - jira_api_token: $JIRA_API_TOKEN
         - target_status: $SANDBOX_RESET_STATUS

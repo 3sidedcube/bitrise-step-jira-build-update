@@ -23,6 +23,23 @@ Add it to your app's `bitrise.yml` after `deploy-to-bitrise-io`, which sets the 
 
 Each app needs three secrets: `JIRA_BASE_URL`, `JIRA_USER_EMAIL` and `JIRA_API_TOKEN` (an API token for the account the comments are posted as).
 
+## Signing in to Jira
+
+Atlassian has two kinds of token, and they're used differently:
+
+- **Classic API token** (id.atlassian.com → Security → *Create API token*): use the default `jira_auth_type: basic`, with `jira_user_email` set to that account's email.
+- **Bearer token** (a *token with scopes*, a service account token, or an OAuth token): set `jira_auth_type: bearer` and leave out `jira_user_email`. These tokens only work through Atlassian's API gateway, so the step sends requests to `https://api.atlassian.com/ex/jira/<cloud ID>`. It looks the cloud ID up from `jira_base_url`; set `jira_cloud_id` if that fails. The token needs the `read:jira-work` and `write:jira-work` scopes.
+
+```yaml
+        inputs:
+        - jira_base_url: $JIRA_BASE_URL
+        - jira_auth_type: bearer
+        - jira_api_token: $JIRA_API_TOKEN
+        - target_status: AI Review
+```
+
+A bearer token sent as `basic` (or to the site URL) gets a 401 or a misleading 404.
+
 ## How it finds the ticket
 
 The source branch comes from the first of these that applies:
@@ -38,8 +55,10 @@ The first Jira key in the branch (e.g. `ABC-123`, case-insensitive) is the ticke
 | Input | Required | Default | Notes |
 |---|---|---|---|
 | `jira_base_url` | yes | | e.g. `https://your-site.atlassian.net`. |
-| `jira_user_email` | yes | | Secret. |
-| `jira_api_token` | yes | | Secret. |
+| `jira_auth_type` | no | `basic` | `basic` (classic API token + email) or `bearer`. See [Signing in to Jira](#signing-in-to-jira). |
+| `jira_user_email` | for `basic` | | Secret. |
+| `jira_api_token` | yes | | Secret. A classic API token or a bearer token. |
+| `jira_cloud_id` | no | looked up | Only for `bearer`. |
 | `target_status` | yes | | Status to move to, e.g. `In Review`. Not case-sensitive. |
 | `comment` | no | build number, install link, branch, commit, build link | Jira wiki markup. `{source_branch}` is replaced with the detected branch. Empty skips commenting. |
 | `source_branch` | no | | Overrides branch detection. |
@@ -57,8 +76,8 @@ The first Jira key in the branch (e.g. `ABC-123`, case-insensitive) is the ticke
 
 - **"No Jira ticket key found"**: the branch has no key, or the build came from a squash merge. Set `source_branch`, or check the step log for the branch it found.
 - **Picks the wrong key** (e.g. `ANDROID-17` from `chore/android-17-upgrade`): set `jira_project_keys`.
-- **401**: check the email and API token secrets.
-- **403 / 404**: the ticket doesn't exist, or the Jira account can't see it.
+- **401**: check the API token secret, and the email for `basic`. "scope does not match" means a bearer token is missing a scope.
+- **403 / 404**: the ticket doesn't exist, or the Jira account can't see it. Jira also answers 404 when it doesn't accept the credentials, e.g. a bearer token used with `basic` auth.
 - **"can't be reached from the ticket's current status"**: the status name is wrong, or the workflow has no transition to it from where the ticket is. The error lists the statuses it can move to.
 
 The comment is posted before the move, so a failed move still leaves the build number on the ticket.

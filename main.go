@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -22,8 +23,10 @@ const (
 // Config holds the step inputs plus the Bitrise variables the step reads.
 type Config struct {
 	JiraBaseURL     string          `env:"jira_base_url,required"`
-	JiraUserEmail   stepconf.Secret `env:"jira_user_email,required"`
+	JiraAuthType    string          `env:"jira_auth_type,opt[basic,bearer]"`
+	JiraUserEmail   stepconf.Secret `env:"jira_user_email"`
 	JiraAPIToken    stepconf.Secret `env:"jira_api_token,required"`
+	JiraCloudID     string          `env:"jira_cloud_id"`
 	TargetStatus    string          `env:"target_status,required"`
 	Comment         string          `env:"comment"`
 	SourceBranch    string          `env:"source_branch"`
@@ -51,9 +54,11 @@ func run(logger log.Logger) error {
 	}
 	stepconf.Print(cfg)
 	fmt.Println()
+	if err := validateAuth(cfg); err != nil {
+		return fmt.Errorf("invalid inputs: %w", err)
+	}
 
 	exporter := export.NewDefaultExporter(command.NewFactory(envRepo))
-	client := NewClient(cfg.JiraBaseURL, string(cfg.JiraUserEmail), string(cfg.JiraAPIToken), requestTimeout)
 
 	branch, source := DetectSourceBranch(cfg.SourceBranch, cfg.CommitSubject, cfg.GitBranch)
 	if source == SourceNone {
@@ -78,6 +83,10 @@ func run(logger log.Logger) error {
 		return nil
 	}
 
+	client, err := newClient(logger, cfg)
+	if err != nil {
+		return err
+	}
 	issueURL := client.IssueURL(key)
 	logger.Infof("Jira ticket %s (%s)", key, issueURL)
 	if err := exportOutputs(exporter, key, issueURL); err != nil {
@@ -96,6 +105,32 @@ func run(logger log.Logger) error {
 	}
 
 	return moveIssue(logger, client, key, cfg.TargetStatus)
+}
+
+// validateAuth checks the inputs each auth type needs, before any request is made.
+func validateAuth(cfg Config) error {
+	if cfg.JiraAuthType != "bearer" && strings.TrimSpace(string(cfg.JiraUserEmail)) == "" {
+		return errors.New("jira_user_email is required when jira_auth_type is basic")
+	}
+	return nil
+}
+
+func newClient(logger log.Logger, cfg Config) (*Client, error) {
+	token := string(cfg.JiraAPIToken)
+	if cfg.JiraAuthType != "bearer" {
+		return NewClient(cfg.JiraBaseURL, string(cfg.JiraUserEmail), token, requestTimeout), nil
+	}
+
+	cloudID := strings.TrimSpace(cfg.JiraCloudID)
+	if cloudID == "" {
+		id, err := LookupCloudID(cfg.JiraBaseURL, requestTimeout)
+		if err != nil {
+			return nil, fmt.Errorf("looking up the Jira cloud ID (set jira_cloud_id to skip this): %w", err)
+		}
+		logger.Printf("Jira cloud ID %s, looked up from jira_base_url", id)
+		cloudID = id
+	}
+	return NewBearerClient(cfg.JiraBaseURL, cloudID, token, requestTimeout), nil
 }
 
 func moveIssue(logger log.Logger, client *Client, key, target string) error {
